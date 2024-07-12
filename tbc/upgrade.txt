@@ -1,0 +1,2 @@
+This files describes API changes in /auth/tbc/*,
+information provided here is intended especially for developers.

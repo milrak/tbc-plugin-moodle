@@ -27,6 +27,7 @@ defined('MOODLE_INTERNAL') || die();
 require_once($CFG->libdir.'/authlib.php');
 require_once($CFG->libdir . '/filelib.php');
 
+
 /**
  * Plugin for no authentication.
  */
@@ -39,7 +40,6 @@ class auth_plugin_rm extends auth_plugin_base {
      */
     public function __construct() {
         $this->authtype = 'rm';
-        
         $this->config = get_config('auth_rm');
     }
 
@@ -68,11 +68,47 @@ class auth_plugin_rm extends auth_plugin_base {
         $user = get_complete_user_data('username', $username);
 
         if(!$user){
-            $mesage = $this->config->mesageusernotfoud ? $this->config->mesageusernotfoud : get_string('auth_rmmesage_user_notfound_defaut', 'auth_rm');
+            $mesage = $this->config->mesageusernotfoud ? $this->config->mesageusernotfoud : get_string('mesage_user_notfound_default', 'auth_rm');
             $this->send_mesage_page_login($mesage);
         }
 
         return true;
+    }
+
+    public function user_login_get_session_portal_edu(){
+        global $DB;
+
+        $keyvar = $this->get_key_variable_name();
+        $key = required_param($keyvar, PARAM_RAW);
+        $wantsurl = optional_param('wantsurl', '', PARAM_LOCALURL);
+
+        if (!$this->check_rate_limit($key)) {
+            $this->send_mesage_page_login(get_string('ratelimitexceeded', 'auth_rm', $this->config->ratelimitgetsession));
+        }
+
+        $username = $this->get_ra_portal_edu_getsession($key);
+
+        $user = $DB->get_record('user', ['username' => $username, 'deleted' => 0]);
+
+        if (!$user) {
+            $mesage = $this->config->mesageusernotfoud ? $this->config->mesageusernotfoud : get_string('mesage_user_notfound_default', 'auth_rm');
+            $this->send_mesage_page_login($mesage);
+        }
+
+        if (!empty($this->config->blockadminsso) && is_siteadmin($user->id)) {
+            $this->send_mesage_page_login(get_string('adminssoblocked', 'auth_rm'));
+        }
+
+        complete_user_login($user);
+
+        if (!empty($wantsurl)) {
+            $urltogo = new moodle_url($wantsurl);
+        } else {
+            $urltogo = core_login_get_return_url();
+        }
+        
+        redirect($urltogo);
+            
     }
 
     
@@ -97,7 +133,7 @@ class auth_plugin_rm extends auth_plugin_base {
             if (!empty($response->Code)) {
                 $this->send_mesage_page_login($response->Code.' - '.$response->Message);
             } else {
-                $this->send_mesage_page_login(get_string('auth_rmmesage_fail_request_rm', 'auth_rm'));
+                $this->send_mesage_page_login(get_string('mesage_fail_request_rm', 'auth_rm'));
         }
     }
 
@@ -115,6 +151,113 @@ class auth_plugin_rm extends auth_plugin_base {
 
         $SESSION->loginerrormsg = $mesage;
         redirect(new moodle_url('/login/index.php'));
+    }
+
+    public function get_ra_portal_edu_getsession($key) {
+
+        $urlGetSession = $this->config->urlgetsession;
+        $variableKey = $this->config->variablekey;
+
+        $context_url = $urlGetSession .'?'. $variableKey .'=' . urlencode($key);
+
+        $curl = new curl();
+
+        $curl->setopt([
+            'CURLOPT_TIMEOUT' => 60,
+            'CURLOPT_CONNECTTIMEOUT' => 20,
+            'CURLOPT_SSL_VERIFYPEER' => false,
+            'CURLOPT_SSL_VERIFYHOST' => 0,
+        ]);
+
+        $json_aluno = $curl->get($context_url);
+
+        if ($curl->error) {
+            debugging('Portal Edu API error: ' . $curl->error, DEBUG_DEVELOPER);
+            return false;
+        }
+
+        $http_code = $curl->info['http_code'];
+        
+        if ($http_code !== 200) {
+            debugging("Portal Edu API returned HTTP {$http_code}", DEBUG_DEVELOPER);
+            $this->send_mesage_page_login(get_string('portalhttperror', 'auth_rm'));
+            return false;
+        }
+
+        if (empty($json_aluno)) {
+            debugging('Portal Edu API returned empty response', DEBUG_DEVELOPER);
+            $this->send_mesage_page_login(get_string('jsonempty', 'auth_rm'));
+            return false;
+        }
+        
+        $array_aluno = json_decode($json_aluno, true);
+
+        var_dump($array_aluno);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            debugging('JSON decode error: ' . json_last_error_msg(), DEBUG_DEVELOPER);
+            $this->send_mesage_page_login(get_string('jsonerror', 'auth_rm'));
+            return false;
+        }
+        
+        if (!isset($array_aluno['data'][0]['RA'])) {
+            $this->send_mesage_page_login(get_string('invalidresponsa', 'auth_rm'));
+            return false;
+        }
+        
+        return $array_aluno['data'][0]['RA'] ?? '';
+    }
+
+    /**
+     * Verifica se o login via GetSession está habilitado
+     *
+     * @return bool
+     */
+    public function is_getsession_enabled() {
+        return !empty($this->config->allowlogingetsession);
+    }
+
+    protected function get_maxattempts(){
+        return !empty($this->config->ratelimitgetsession) ? (int)$this->config->ratelimitgetsession : 5;
+    }
+
+    /**
+     * Obtém o nome da variável configurada para receber a key
+     *
+     * @return string Nome da variável (padrão: 'key')
+     */
+    public function get_key_variable_name() {
+        $varname = 'key';
+    
+        if (!empty($this->config->variablekey)) {
+            $cleaned = clean_param($this->config->variablekey, PARAM_ALPHANUMEXT);
+            if (!empty($cleaned) && preg_match('/^[a-z][a-z0-9_]*$/i', $cleaned)) {
+                $varname = $cleaned;
+            }
+        }
+        return $varname;
+    }
+
+    protected function check_rate_limit($token) {
+        $cache = cache::make('auth_rm', 'ratelimit');
+        $key = 'getSession_' . md5($token);
+
+        $attempts = $cache->get($key);
+    
+        if ($attempts === false) {
+            $attempts = 0;
+        }
+
+        $maxattempts = $this->get_maxattempts();
+
+        if ($attempts >= $maxattempts) {
+            debugging('Rate limit exceeded for token', DEBUG_NORMAL);
+            return false;
+        }
+
+        $cache->set($key, $attempts + 1);
+
+        return true;
     }
 
     function prevent_local_passwords() {

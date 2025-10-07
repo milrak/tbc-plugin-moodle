@@ -21,9 +21,7 @@
  * @copyright  2024 Milrak Pereira Pessoa
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
-//require_once(dirname(__FILE__) . '/../../config.php');
+require_once(dirname(__FILE__) . '/../../config.php');
 
 
 if (!is_enabled_auth('rm')) {

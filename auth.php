@@ -104,7 +104,18 @@ class auth_plugin_rm extends auth_plugin_base {
         if (!empty($wantsurl)) {
             $urltogo = new moodle_url($wantsurl);
         } else {
-            $urltogo = core_login_get_return_url();
+            if (function_exists('core_login_get_return_url')) {
+                $urltogo = core_login_get_return_url();
+            } else {
+                // Replica o comportamento da função para versões antigas
+                $SESSION = isset($SESSION) ? $SESSION : new stdClass();
+                if (!empty($SESSION->wantsurl)) {
+                    $urltogo = new moodle_url($SESSION->wantsurl);
+                    unset($SESSION->wantsurl);
+                } else {
+                    $urltogo = new moodle_url('/');
+                }
+            }
         }
         
         redirect($urltogo);
@@ -172,7 +183,7 @@ class auth_plugin_rm extends auth_plugin_base {
         $json_aluno = $curl->get($context_url);
 
         if ($curl->error) {
-            debugging('Portal Edu API error: ' . $curl->error, DEBUG_DEVELOPER);
+            $this->send_mesage_page_login('Erro curl: ' . $curl->error);
             return false;
         }
 
@@ -191,8 +202,6 @@ class auth_plugin_rm extends auth_plugin_base {
         }
         
         $array_aluno = json_decode($json_aluno, true);
-
-        var_dump($array_aluno);
         
         if (json_last_error() !== JSON_ERROR_NONE) {
             debugging('JSON decode error: ' . json_last_error_msg(), DEBUG_DEVELOPER);

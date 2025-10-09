@@ -87,7 +87,7 @@ class auth_plugin_rm extends auth_plugin_base {
         }
 
         $username = $this->get_ra_portal_edu_getsession($key);
-        
+
         $user = $DB->get_record('user', ['username' => $username, 'deleted' => 0]);
 
         if (!$user) {

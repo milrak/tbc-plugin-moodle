@@ -54,6 +54,13 @@ if ($ADMIN->fulltree) {
         $yesno)
     );
 
+    $settings->add(new admin_setting_configcheckbox(
+        'auth_rm/usecontextstudent',
+        get_string('usecontextstudent', 'auth_rm'),
+        get_string('usecontextstudent_description', 'auth_rm'),
+        0
+    ));
+
     $settings->add(new admin_setting_configtext('auth_rm/mesageusernotfoud',
         new lang_string('mesageusernotfoud', 'auth_rm'),
         new lang_string('mesageusernotfoud_description', 'auth_rm'),

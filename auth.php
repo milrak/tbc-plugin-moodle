@@ -33,7 +33,10 @@ require_once($CFG->libdir . '/filelib.php');
  */
 class auth_plugin_rm extends auth_plugin_base {
 
-    protected const URL_GET_TOKEN = '/api/connect/token/';
+    protected const URL_GET_TOKEN = '/api/connect/token';
+
+    protected const URL_GET_CONTEXTO = '/api/educational/v1/StudentContexts';
+
 
     /**
      * Constructor.
@@ -53,6 +56,14 @@ class auth_plugin_rm extends auth_plugin_base {
         self::__construct();
     }
 
+    public function loginpage_hook() {
+        global $PAGE;
+
+        if(!empty($this->config->usecontextstudent)){
+            $PAGE->requires->js_call_amd('auth_rm/login', 'init');
+        }
+    }
+
     /*
      * Returns true if the username and password work or don't exist and false
      * if the user exists and the password is wrong.
@@ -62,8 +73,9 @@ class auth_plugin_rm extends auth_plugin_base {
      * @return bool Authentication success or failure.
      */
     function user_login($username, $password) {
+        global $SESSION;
 
-        $this->get_token_tbc($username, $password);
+        $SESSION->tokenAPIRM = $this->get_token_tbc($username, $password);
 
         $user = get_complete_user_data('username', $username);
 
@@ -74,6 +86,39 @@ class auth_plugin_rm extends auth_plugin_base {
 
         return true;
     }
+
+
+    public function user_authenticated_hook(&$user, $username, $password){
+        global $CFG;
+        global $SESSION;
+
+        if ($user->auth !== 'rm') {
+            return;
+        }
+
+        $entrarComo = optional_param('entrarComo', '', PARAM_TEXT);
+
+        if ($this->config->usecontextstudent && 
+            $this->is_professor_pattern($username) &&
+            $entrarComo == 'student') {
+            $contextos = $this->get_contexto_aluno($SESSION->tokenAPIRM);
+            $studentCodes = $this->extract_unique_student_codes($contextos);
+            $username = !empty($studentCodes) ? $studentCodes[0] : $username;
+        }
+
+        $user = get_complete_user_data('username', $username);
+
+        if (!$user) {
+            $mesage = $this->config->mesageusernotfoud 
+                ? $this->config->mesageusernotfoud 
+                : get_string('mesage_user_notfound_default', 'auth_rm');
+            $this->send_mesage_page_login($mesage);
+            return false;
+        }
+
+        $user = $user;
+    }
+
 
     public function user_login_get_session_portal_edu(){
         global $DB;
@@ -107,7 +152,6 @@ class auth_plugin_rm extends auth_plugin_base {
             if (function_exists('core_login_get_return_url')) {
                 $urltogo = core_login_get_return_url();
             } else {
-                // Replica o comportamento da função para versões antigas
                 $SESSION = isset($SESSION) ? $SESSION : new stdClass();
                 if (!empty($SESSION->wantsurl)) {
                     $urltogo = new moodle_url($SESSION->wantsurl);
@@ -122,39 +166,110 @@ class auth_plugin_rm extends auth_plugin_base {
             
     }
 
-    
-    private function get_token_tbc($username, $password){
+    /**
+     * Faz uma requisição genérica à API do RM.
+     *
+     * @param string $endpoint Endpoint da API (ex: self::URL_GET_TOKEN)
+     * @param string $method Método HTTP ('GET' ou 'POST')
+     * @param array|null $data Dados a serem enviados (para POST)
+     * @param string|null $token Token Bearer opcional
+     * @return mixed Retorno decodificado do JSON
+     */
+    private function call_rm_api($endpoint, $method = 'GET', $data = null, $token = null) {
+        $url = rtrim($this->config->host_rm, '/') . $endpoint;
 
-        $url = $this->config->host_rm.''.self::URL_GET_TOKEN;
-        
         $curl = new curl();
-        $curl->setHeader(array('Content-type: application/json'));
+        $headers = ['Content-Type: application/json'];
 
-        $data = "{'username': '{$username}', 'password': '{$password}'}";
+        if (!empty($token)) {
+            $headers[] = 'Authorization: Bearer ' . $token;
+        }
 
-        $response = $curl->post($url, $data, array(
+        $curl->setHeader($headers);
+        $curl->setopt([
             'CURLOPT_SSL_VERIFYHOST' => 0,
             'CURLOPT_SSL_VERIFYPEER' => false,
             'CURLOPT_RETURNTRANSFER' => true,
-        ));
+            'CURLOPT_TIMEOUT' => 60,
+        ]);
+
+        if (strtoupper($method) === 'POST') {
+            $response = $curl->post($url, json_encode($data));
+        } else {
+            $response = $curl->get($url);
+        }
+
+        if ($curl->error) {
+            $this->send_mesage_page_login('Erro curl: ' . $curl->error);
+            return false;
+        }
 
         $info = $curl->get_info();
+        $decoded = json_decode($response);
+
         if ($info['http_code'] != 200) {
-            $response = json_decode($response);
-            if (!empty($response->Code)) {
-                $this->send_mesage_page_login($response->Code.' - '.$response->Message);
-            } else {
-                $this->send_mesage_page_login(get_string('mesage_fail_request_rm', 'auth_rm'));
+            debugging("call_rm_api() error {$info['http_code']} on {$endpoint} response: {$response}", DEBUG_DEVELOPER);
+            if (!empty($decoded->Code) || !empty($decoded->code)) {
+                $code = !empty($decoded->Code) ? $decoded->Code : $decoded->code;
+                $message = !empty($decoded->Message) ? $decoded->Message : $decoded->message;
+                $this->send_mesage_page_login($code . ' - ' . $message);
+            }
         }
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            debugging('JSON decode error: ' . json_last_error_msg(), DEBUG_DEVELOPER);
+            $this->send_mesage_page_login(get_string('jsonerror', 'auth_rm'));
+        }
+
+        return $decoded;
     }
 
-    $token = json_decode($response)->access_token;
+    private function get_token_tbc($username, $password) {
+        $data = [
+            'username' => $username,
+            'password' => $password
+        ];
 
-    if (empty($token)) {
-        $this->send_mesage_page_login(get_string('auth_rmmesage_token_notfound', 'auth_rm'));
+        $response = $this->call_rm_api(self::URL_GET_TOKEN, 'POST', $data);
+
+        $token = $response->access_token ?? null;
+
+        if (empty($token)) {
+            $this->send_mesage_page_login(get_string('mesage_token_notfound', 'auth_rm'));
+        }
+
+        return $token;
     }
-    return $token;
 
+    private function get_contexto_aluno($token) {
+
+        $response = $this->call_rm_api(self::URL_GET_CONTEXTO, 'GET', null, $token);
+
+        if (empty($response->items)) {
+            debugging('RM API - Contexto vazio', DEBUG_DEVELOPER);
+            $this->send_mesage_page_login(get_string('contextnotfoud', 'auth_rm'));
+        }
+
+        return $response->items;
+    }
+
+    private function extract_unique_student_codes(array $contextos): array {
+        if (empty($contextos)) {
+            return [];
+        }
+        $studentCodes = array_column($contextos, 'studentCode');
+        $uniqueCodes = array_values(array_unique($studentCodes));
+        return $uniqueCodes;
+    }
+
+    private function is_professor_pattern($username) {
+        $username = trim($username);
+        
+        if (empty($username)) {
+            return false;
+        }
+        
+        return preg_match('/^[a-zA-Z]/', $username) && preg_match('/[a-zA-Z]/', $username);
     }
 
     private function send_mesage_page_login($mesage){

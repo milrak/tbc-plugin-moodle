@@ -17,8 +17,8 @@ define([], function() {
             select.classList.add('form-control', 'form-control-lg', 'mb-3');
 
             const options = [
-                { value: 'student', text: 'Acessar como Aluno' },
-                { value: 'teacher', text: 'Acessar como Professor' },
+                { value: 'student', text: 'Aluno' },
+                { value: 'teacher', text: 'Professor/Funcionário' },
             ];
 
             options.forEach(opt => {

@@ -24,7 +24,7 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version   = 2025101301;
+$plugin->version   = 2025101302;
 $plugin->requires  = 2022112800;    // Moodle 4.1.0+
 $plugin->component = 'auth_rm'; 
 $plugin->maturity  = MATURITY_STABLE;

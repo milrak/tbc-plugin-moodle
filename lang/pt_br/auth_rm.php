@@ -73,4 +73,8 @@ $string['blockadminsso'] = 'Bloquear administrador via SSO';
 $string['blockadminsso_description'] = 'Quando marcado não permite que administradores acessem via SSO/GetSession';
 $string['adminssoblocked'] = 'Usuário adminstrador. Por favor, acesse utilizando suas credenciais.';
 
+$string['usecontextstudent'] = 'Permite o usuário selecionar o Contexto do aluno no login.';
+$string['usecontextstudent_description'] = 'Quando marcado o usuário pode selecionar o contexto que irá acessar. (ideal para quando o CODUSUARIO for diferente do RA.<br>Faz uso da API <a target="_blank" href="https://api.totvs.com.br/apidetails/StudentContext_v1_000.json">Contexto do aluno - 1.000</a>';
+$string['contextnotfoud'] = 'Contexto não acessível.';
+
  ?>
